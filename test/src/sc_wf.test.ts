@@ -14,54 +14,23 @@ import { BlockArgs as SamplesAndDataBlockArgs } from '@platforma-open/milaborato
 import { blockSpec as myBlockSpec } from 'this-block';
 import { InferBlockState, fromPlRef, wrapOutputs } from '@platforma-sdk/model';
 
-blockTest('empty imputs', { timeout: 30000 }, async ({ rawPrj: project, ml, helpers, expect }) => {
-  const blockId = await project.addBlock('Block', myBlockSpec);
-  const stableState = (await awaitStableState(
-    project.getBlockState(blockId),
-    25000
-  )) as InferBlockState<typeof platforma>;
-  expect(stableState.outputs).toMatchObject({ inputOptions: { ok: true, value: [] } });
-  const presets = SupportedPresetList.parse(
-    JSON.parse(
-      Buffer.from(
-        await ml.driverKit.blobDriver.getContent(wrapOutputs(stableState.outputs).presets!.handle!)
-      ).toString()
-    )
-  );
-  expect(presets).length.gt(10);
-  expect(presets?.map((p) => p.presetName)).toContain('10x-sc-xcr-vdj');
-});
-
 blockTest(
-  'preset content',
-  { timeout: 100000 },
-  async ({ rawPrj: project, ml, helpers, expect }) => {
-    const blockId = await project.addBlock('Block', myBlockSpec);
-    await project.setBlockArgs(blockId, {
-      preset: { type: 'name', name: 'milab-human-dna-xcr-7genes-multiplex' }
-    } satisfies BlockArgs);
-    const stableState = (await awaitStableState(
-      project.getBlockState(blockId),
-      250000
-    )) as InferBlockState<typeof platforma>;
-    const preset = wrapOutputs(stableState.outputs).preset;
-    expect(preset).toBeTypeOf('object');
-  }
-);
-
-blockTest(
-  'simple project',
-  { timeout: 200000 },
+  'simple sc project',
+  { timeout: 400000 },
   async ({ rawPrj: project, ml, helpers, expect }) => {
     const sndBlockId = await project.addBlock('Samples & Data', samplesAndDataBlockSpec);
     const clonotypingBlockId = await project.addBlock('MiXCR Clonotyping', myBlockSpec);
 
     const sample1Id = uniquePlId();
+    const sample2Id = uniquePlId();
     const metaColumn1Id = uniquePlId();
     const dataset1Id = uniquePlId();
+    
+    const s1r1Handle = await helpers.getLocalFileHandle('./assets/SRR11233623-sc_R1.fastq.gz');
+    const s1r2Handle = await helpers.getLocalFileHandle('./assets/SRR11233623-sc_R2.fastq.gz');
 
-    const r1Handle = await helpers.getLocalFileHandle('./assets/small_data_R1.fastq.gz');
-    const r2Handle = await helpers.getLocalFileHandle('./assets/small_data_R2.fastq.gz');
+    const s2r1Handle = await helpers.getLocalFileHandle('./assets/SRR11233625-sc_R1.fastq.gz');
+    const s2r2Handle = await helpers.getLocalFileHandle('./assets/SRR11233625-sc_R2.fastq.gz');
 
     project.setBlockArgs(sndBlockId, {
       metadata: [
@@ -88,8 +57,12 @@ blockTest(
             gzipped: true,
             data: {
               [sample1Id]: {
-                R1: r1Handle,
-                R2: r2Handle
+                R1: s1r1Handle,
+                R2: s1r2Handle
+              },
+              [sample2Id]: {
+                R1: s2r1Handle,
+                R2: s2r2Handle
               }
             }
           }
@@ -103,7 +76,7 @@ blockTest(
 
     const sdnStableState1 = await helpers.awaitBlockDoneAndGetStableBlockState(sndBlockId, 8000);
     expect(sdnStableState1.outputs).toMatchObject({
-      fileImports: { ok: true, value: { [r1Handle]: { done: true }, [r2Handle]: { done: true } } }
+      fileImports: { ok: true, value: { [s1r1Handle]: { done: true }, [s1r2Handle]: { done: true }, [s2r1Handle]: { done: true }, [s2r2Handle]: { done: true } } }
     });
 
     const clonotypingStableState1 = (await awaitStableState(
@@ -135,7 +108,8 @@ blockTest(
 
     await project.setBlockArgs(clonotypingBlockId, {
       input: clonotypingStableState1Outputs.inputOptions[0].ref,
-      preset: { type: 'name', name: 'milab-human-dna-xcr-7genes-multiplex' },
+      preset: { type: 'name', name: '10x-sc-xcr-vdj' },
+      species: 'human',
       // chains: ['TRB'],
     } satisfies BlockArgs);
 
@@ -152,7 +126,7 @@ blockTest(
     await project.runBlock(clonotypingBlockId);
     const clonotypingStableState3 = (await helpers.awaitBlockDoneAndGetStableBlockState(
       clonotypingBlockId,
-      35000
+      60000
     )) as InferBlockState<typeof platforma>;
     const outputs3 = wrapOutputs<BlockOutputs>(clonotypingStableState3.outputs);
 
@@ -205,8 +179,15 @@ blockTest(
     // console.dir(clonesPfColumnList[0].spec, { depth: 5 });
 
     expect(
-      clonesPfColumnList.map(c => c.spec.axesSpec.find((s: any) => s.name === 'pl7.app/vdj/clonotypeKey')).find(Boolean)?.domain
-    ).toHaveProperty("pl7.app/vdj/clonotypeKey/structure");
+      clonesPfColumnList.map(c => c.spec.axesSpec.find((s: any) => s.name === 'pl7.app/vdj/scClonotypeKey')).find(Boolean)?.domain
+    ).toHaveProperty("pl7.app/vdj/scClonotypeKey/structure");
+
+    expect(
+      clonesPfColumnList.some(c => 
+        c.spec.axesSpec.find((s: any) => s.name === 'pl7.app/vdj/scClonotypeKey') && 
+        c.spec.axesSpec.find((s: any) => s.name === 'pl7.app/sampleId')
+      )
+    ).toEqual(true);
 
     expect(clonesPfColumnList).length.to.greaterThanOrEqual(7);
   }
